@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.profraw
+lcov.info
+coverage/
+.idea/
+.vscode/
+.claude/
+.DS_Store

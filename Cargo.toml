@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# --- Shared package metadata (inherited by every crate via `field.workspace = true`) ---
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.85"
+license      = "MIT"
+authors      = ["Alexandr"]
+repository   = "https://github.com/your-user/claude-limit-watchdog"
+homepage     = "https://github.com/your-user/claude-limit-watchdog"
+readme       = "README.md"
+
+# --- Shared dependency versions (inherited via `dep.workspace = true`) ---
+[workspace.dependencies]
+# Internal crates
+clw-domain         = { path = "crates/domain" }
+clw-application    = { path = "crates/application" }
+clw-infrastructure = { path = "crates/infrastructure" }
+
+# External
+anyhow             = "1"
+thiserror          = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap               = { version = "4", features = ["derive"] }
+jiff               = "0.1"
+regex              = "1"
+ctrlc              = "3"
+
+# Test-only
+rstest             = "0.23"
+proptest           = "1"
+insta              = { version = "1", features = ["yaml"] }
+mockall            = "0.13"
+
+# --- Lints applied to every crate (each crate opts in via `[lints] workspace = true`) ---
+[workspace.lints.rust]
+unsafe_code                   = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub               = "warn"
+unused                        = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all      = { level = "deny",  priority = -1 }
+pedantic = { level = "warn",  priority = -1 }
+# A few extra hand-picked rules:
+todo            = "warn"
+unimplemented   = "warn"
+dbg_macro       = "deny"
+panic_in_result_fn = "warn"
+# Pedantic exceptions that are too noisy for a CLI tool:
+module_name_repetitions = "allow"
+missing_errors_doc      = "allow"
+missing_panics_doc      = "allow"
+
+# --- Release profile: small, fast binary ---
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+panic         = "abort"

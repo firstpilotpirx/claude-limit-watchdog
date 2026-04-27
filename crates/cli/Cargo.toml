@@ -1,0 +1,28 @@
+[package]
+name         = "clw-cli"
+description  = "Composition root: wires the binary `cc-resume-session`."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[[bin]]
+name = "cc-resume-session"
+path = "src/main.rs"
+
+[dependencies]
+clw-application    = { workspace = true }
+clw-infrastructure = { workspace = true }
+anyhow             = { workspace = true }
+clap               = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+insta  = { workspace = true }
+
+[lints]
+workspace = true

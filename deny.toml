@@ -1,0 +1,70 @@
+# cargo-deny — security, license, and architecture gate.
+#   cargo deny check               # everything
+#   cargo deny check advisories    # CVE check (RustSec)
+#   cargo deny check licenses      # license compatibility
+#   cargo deny check bans          # architecture rules + dup versions
+#   cargo deny check sources       # only crates.io / known git allowed
+
+[graph]
+all-features = false
+
+# --- Vulnerability scan against RustSec ---
+[advisories]
+version  = 2
+db-urls  = ["https://github.com/rustsec/advisory-db"]
+yanked   = "deny"
+ignore   = []
+
+# --- License whitelist for the dependency tree ---
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+]
+confidence-threshold = 0.8
+
+# --- Architecture rules (the equivalent of ArchUnit DSL) ---
+#
+# Rule:  IO / presentation libraries are allowed ONLY in the layer that owns IO.
+# How:   `wrappers` lists the only crates that may transitively pull in the named
+#        dependency. If `clw-domain` accidentally pulls in `crossterm`, this fails.
+[bans]
+multiple-versions = "warn"
+wildcards         = "deny"
+allow-wildcards   = []
+
+# Process / signal handling — infrastructure layer only.
+[[bans.deny]]
+name     = "ctrlc"
+wrappers = ["clw-infrastructure"]
+
+# CLI parsing — composition root only.
+[[bans.deny]]
+name     = "clap"
+wrappers = ["clw-cli"]
+
+# `tracing-subscriber` is a runtime concern → only the binary wires it up.
+[[bans.deny]]
+name     = "tracing-subscriber"
+wrappers = ["clw-cli"]
+
+# Add more as needed, e.g.:
+#   [[bans.deny]] name = "tokio" wrappers = ["clw-infrastructure", "clw-cli"]
+#   [[bans.deny]] name = "sqlx"  wrappers = ["clw-infrastructure"]
+
+# --- Source allow-list (no random git deps) ---
+[sources]
+unknown-registry = "deny"
+unknown-git      = "deny"
+allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+allow-git        = []

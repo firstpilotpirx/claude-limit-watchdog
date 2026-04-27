@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  pipeline:
+    name: Full pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install dev tooling
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-deny,cargo-audit,cargo-llvm-cov,cargo-machete,taplo-cli,just
+
+      # --- Group 2: formatting ---
+      - name: spotless-rust
+        run: cargo fmt --all -- --check
+
+      - name: spotless-toml
+        run: taplo fmt --check
+
+      # --- Group 1: build/lifecycle ---
+      - name: compile-main
+        run: cargo check --workspace --all-targets
+
+      - name: compile-tests
+        run: cargo test --workspace --no-run --all-targets
+
+      # --- Group 3: linters ---
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # --- Group 5: architecture (cargo-deny [bans]) + Group 4: hygiene ---
+      - name: architecture-tests
+        run: cargo deny check bans
+
+      - name: license-check
+        run: cargo deny check licenses
+
+      - name: audit
+        run: cargo deny check advisories
+
+      - name: unused-deps
+        run: cargo machete
+
+      # --- Group 6: tests ---
+      - name: unit-tests
+        run: cargo nextest run --workspace
+
+      - name: doc-tests
+        run: cargo test --workspace --doc
+
+      # --- Group 7: coverage ---
+      - name: coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: upload-coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+      # --- Group 1 again: release build ---
+      - name: assemble
+        run: cargo build --workspace --release
+
+      # --- Group 8: docs ---
+      - name: doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
