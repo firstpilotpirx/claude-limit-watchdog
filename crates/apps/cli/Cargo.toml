@@ -13,8 +13,7 @@ name = "cc-resume-session"
 path = "src/main.rs"
 
 [dependencies]
-clw-application    = { workspace = true }
-clw-infrastructure = { workspace = true }
+clw-watchdog       = { workspace = true }
 anyhow             = { workspace = true }
 clap               = { workspace = true }
 tracing            = { workspace = true }

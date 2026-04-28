@@ -1,0 +1,42 @@
+[package]
+name         = "clw-watchdog"
+description  = "Claude Code rate-limit watchdog component: domain, application, primary & secondary adapters."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+# core::domain
+jiff      = { workspace = true }
+regex     = { workspace = true }
+thiserror = { workspace = true }
+
+# core::application
+serde     = { workspace = true }
+tracing   = { workspace = true }
+mockall   = { workspace = true, optional = true }
+
+# adapters
+anyhow      = { workspace = true }
+ctrlc       = { workspace = true }
+serde_json  = { workspace = true }
+serde_yml   = { workspace = true }
+dirs        = { workspace = true }
+comfy-table = { workspace = true }
+dialoguer   = { workspace = true }
+
+[dev-dependencies]
+mockall  = { workspace = true }
+rstest   = { workspace = true }
+proptest = { workspace = true }
+insta    = { workspace = true }
+
+[features]
+# Enabled in tests to expose mockall-generated fakes for the ports.
+test-support = ["dep:mockall"]
+
+[lints]
+workspace = true

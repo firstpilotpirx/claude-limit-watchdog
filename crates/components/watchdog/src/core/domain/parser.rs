@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use jiff::tz::TimeZone;
 use regex::Regex;
 
-use crate::reset_time::ResetTime;
+use super::reset_time::ResetTime;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {

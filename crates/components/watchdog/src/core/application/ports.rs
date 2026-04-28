@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::core::domain::{ModelStats, SessionWindow};
+
 /// Tmux pane access. Implemented by spawning `tmux` subprocesses.
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 pub trait Tmux: Send + Sync {
@@ -34,12 +36,17 @@ pub trait StopSignal: Send + Sync {
 }
 
 /// Snapshot passed to [`Presenter::idle_tick`] each second while idle.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct IdleInfo {
-    pub now_epoch: i64,
+    pub now_epoch:    i64,
     pub last_poll_at: i64,
-    pub started_at: i64,
+    pub started_at:   i64,
     pub resume_count: u32,
+    /// Current 5h session window. `None` until the first usage refresh, or if
+    /// no active session exists right now (last activity older than 5h).
+    pub session_window: Option<SessionWindow>,
+    /// Per-model totals **inside** `session_window`. Empty until first refresh.
+    pub session_stats:  Vec<ModelStats>,
 }
 
 /// Configuration snapshot passed to [`Presenter::banner`] at start-up.

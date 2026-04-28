@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use clw_application::ports::Clock;
+use crate::core::application::ports::Clock;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;

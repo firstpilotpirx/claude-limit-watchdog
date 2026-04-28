@@ -48,6 +48,31 @@ allow-wildcards   = []
 name     = "ctrlc"
 wrappers = ["clw-infrastructure"]
 
+# JSONL parsing — only the infra adapter that reads Claude Code logs needs serde_json.
+[[bans.deny]]
+name     = "serde_json"
+wrappers = ["clw-infrastructure"]
+
+# YAML config — only the infra adapter that loads/saves user settings.
+[[bans.deny]]
+name     = "serde_yml"
+wrappers = ["clw-infrastructure"]
+
+# Home/config dir lookup — only infra needs it for the default config path.
+[[bans.deny]]
+name     = "dirs"
+wrappers = ["clw-infrastructure"]
+
+# Interactive terminal prompts — wizard lives in the CLI composition root.
+[[bans.deny]]
+name     = "dialoguer"
+wrappers = ["clw-cli"]
+
+# Table rendering — only the binary draws tables.
+[[bans.deny]]
+name     = "comfy-table"
+wrappers = ["clw-infrastructure"]
+
 # CLI parsing — composition root only.
 [[bans.deny]]
 name     = "clap"

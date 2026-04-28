@@ -1,13 +1,13 @@
 //! Watchdog use case.
 //!
 //! Pure orchestration: every IO operation goes through a port (`Tmux`, `Clock`,
-//! `StopSignal`, `Presenter`). All time math lives in `clw-domain`.
+//! `StopSignal`, `Presenter`). All time math lives in [`crate::core::domain`].
 
 use std::time::Duration;
 
-use clw_domain::{parse_reset_line, ResetTime};
-
-use crate::ports::{BannerInfo, Clock, IdleInfo, Presenter, StopSignal, Tmux, TmuxError};
+use super::ports::{BannerInfo, Clock, IdleInfo, Presenter, StopSignal, Tmux, TmuxError};
+use super::usage_report::{UsageLogReader, UsageReportService};
+use crate::core::domain::{parse_reset_line, ModelStats, ResetTime, SessionWindow};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
@@ -59,37 +59,44 @@ pub struct RunStats {
 }
 
 #[derive(Debug)]
-pub struct WatchService<T, C, S, P> {
-    tmux: T,
-    clock: C,
-    stop: S,
-    presenter: P,
-    cfg: WatchConfig,
+pub struct WatchService<T, C, S, P, U> {
+    tmux:          T,
+    clock:         C,
+    stop:          S,
+    presenter:     P,
+    usage_service: UsageReportService<U>,
+    cfg:           WatchConfig,
 }
 
 #[derive(Debug)]
 struct State {
-    started_at: i64,
+    started_at:         i64,
     last_handled_epoch: i64,
-    last_poll_at: i64,
-    resume_count: u32,
+    last_poll_at:       i64,
+    resume_count:       u32,
+    session_window:     Option<SessionWindow>,
+    session_stats:      Vec<ModelStats>,
 }
 
-impl<T, C, S, P> WatchService<T, C, S, P>
+impl<T, C, S, P, U> WatchService<T, C, S, P, U>
 where
     T: Tmux,
     C: Clock,
     S: StopSignal,
     P: Presenter,
+    U: UsageLogReader,
 {
-    pub fn new(tmux: T, clock: C, stop: S, presenter: P, cfg: WatchConfig) -> Self {
-        Self {
-            tmux,
-            clock,
-            stop,
-            presenter,
-            cfg,
-        }
+    pub fn new(
+        tmux: T,
+        clock: C,
+        stop: S,
+        presenter: P,
+        usage_reader: U,
+        cfg: WatchConfig,
+    ) -> Self {
+        // Session length matches Claude's published 5h plan window.
+        let usage_service = UsageReportService::new(usage_reader, 5 * 3600);
+        Self { tmux, clock, stop, presenter, usage_service, cfg }
     }
 
     pub fn presenter(&self) -> &P {
@@ -105,6 +112,8 @@ where
             last_handled_epoch: 0,
             last_poll_at: started_at,
             resume_count: 0,
+            session_window: None,
+            session_stats: Vec::new(),
         };
 
         if !self.tmux.has_session(&self.cfg.session) {
@@ -124,6 +133,7 @@ where
         // First check fires immediately so a stale limit message in the pane is
         // handled without waiting a full poll interval.
         self.check_once(&mut state)?;
+        self.refresh_usage(&mut state);
 
         let poll_interval = self.cfg.poll_interval_secs();
         let mut last_check = self.clock.now_epoch();
@@ -133,12 +143,15 @@ where
             if now - last_check >= poll_interval {
                 last_check = now;
                 self.check_once(&mut state)?;
+                self.refresh_usage(&mut state);
             }
             self.presenter.idle_tick(&IdleInfo {
-                now_epoch: now,
-                last_poll_at: state.last_poll_at,
-                started_at: state.started_at,
-                resume_count: state.resume_count,
+                now_epoch:      now,
+                last_poll_at:   state.last_poll_at,
+                started_at:     state.started_at,
+                resume_count:   state.resume_count,
+                session_window: state.session_window,
+                session_stats:  state.session_stats.clone(),
             });
             self.clock.sleep(Duration::from_secs(1));
         }
@@ -201,6 +214,22 @@ where
         Ok(())
     }
 
+    /// Re-read Claude Code logs and recompute the per-model totals for the
+    /// current 5h window. Errors are surfaced via the presenter (warning) and
+    /// then swallowed — the watchdog stays up even if log parsing fails.
+    fn refresh_usage(&self, state: &mut State) {
+        let now = self.clock.now_epoch();
+        match self.usage_service.current_session(now) {
+            Ok(report) => {
+                state.session_window = report.window;
+                state.session_stats = report.stats;
+            }
+            Err(e) => {
+                self.presenter.warn(&format!("usage refresh failed: {e}"));
+            }
+        }
+    }
+
     fn countdown(&self, end_epoch: i64, target_human: &str) {
         let total = end_epoch - self.clock.now_epoch();
         if total <= 0 {
@@ -247,7 +276,16 @@ mod tests {
     use mockall::predicate::eq;
 
     use super::*;
-    use crate::ports::{IdleInfo, MockClock, MockPresenter, MockStopSignal, MockTmux};
+    use crate::core::application::ports::{
+        IdleInfo, MockClock, MockPresenter, MockStopSignal, MockTmux,
+    };
+    use crate::core::application::usage_report::MockUsageLogReader;
+
+    fn empty_usage_reader() -> MockUsageLogReader {
+        let mut r = MockUsageLogReader::new();
+        r.expect_read_all().returning(|| Ok(Vec::new()));
+        r
+    }
 
     fn defaults() -> WatchConfig {
         WatchConfig::defaults_for("work")
@@ -257,7 +295,7 @@ mod tests {
         let mut p = MockPresenter::new();
         p.expect_banner().returning(|_| ());
         p.expect_started().returning(|| ());
-        p.expect_idle_tick().returning(|_: &IdleInfo| ());
+        p.expect_idle_tick().returning(|_info: &IdleInfo| ());
         p.expect_limit_detected().returning(|_, _, _| ());
         p.expect_limit_already_passed().returning(|_| ());
         p.expect_countdown_step().returning(|_, _, _| ());
@@ -275,6 +313,7 @@ mod tests {
             MockClock::new(),
             MockStopSignal::new(),
             MockPresenter::new(),
+            empty_usage_reader(),
             defaults(),
         );
         let pane = "\
@@ -296,6 +335,7 @@ trailing line
             MockClock::new(),
             MockStopSignal::new(),
             MockPresenter::new(),
+            empty_usage_reader(),
             defaults(),
         );
         assert!(svc
@@ -318,6 +358,7 @@ trailing line
             clock,
             MockStopSignal::new(),
             MockPresenter::new(),
+            empty_usage_reader(),
             defaults(),
         );
 
@@ -357,7 +398,14 @@ trailing line
             *c > 1
         });
 
-        let svc = WatchService::new(tmux, clock, stop, presenter_allowing_anything(), defaults());
+        let svc = WatchService::new(
+            tmux,
+            clock,
+            stop,
+            presenter_allowing_anything(),
+            empty_usage_reader(),
+            defaults(),
+        );
 
         let stats = svc.run().expect("clean shutdown");
         assert_eq!(stats.resume_count, 1);

@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use clw_application::ports::{Tmux, TmuxError};
+use crate::core::application::ports::{Tmux, TmuxError};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TmuxCli;

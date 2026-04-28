@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/apps/cli", "crates/components/watchdog"]
 
 # --- Shared package metadata (inherited by every crate via `field.workspace = true`) ---
 [workspace.package]
@@ -16,9 +16,7 @@ readme       = "README.md"
 # --- Shared dependency versions (inherited via `dep.workspace = true`) ---
 [workspace.dependencies]
 # Internal crates
-clw-domain         = { path = "crates/domain" }
-clw-application    = { path = "crates/application" }
-clw-infrastructure = { path = "crates/infrastructure" }
+clw-watchdog = { path = "crates/components/watchdog" }
 
 # External
 anyhow             = "1"
@@ -29,6 +27,12 @@ clap               = { version = "4", features = ["derive"] }
 jiff               = "0.1"
 regex              = "1"
 ctrlc              = "3"
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+serde_yml          = "0.0.12"
+dialoguer          = "0.11"
+dirs               = "5"
+comfy-table        = "=7.1.4"
 
 # Test-only
 rstest             = "0.23"

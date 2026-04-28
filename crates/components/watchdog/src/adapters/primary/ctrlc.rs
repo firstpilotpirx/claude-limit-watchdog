@@ -1,7 +1,9 @@
+//! Primary adapter: Ctrl-C / SIGTERM handler that flips a [`StopSignal`].
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use clw_application::ports::StopSignal;
+use crate::core::application::ports::StopSignal;
 
 /// `StopSignal` backed by the `ctrlc` crate's signal handler (SIGINT + SIGTERM).
 #[derive(Debug, Clone)]
