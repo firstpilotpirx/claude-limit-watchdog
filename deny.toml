@@ -37,41 +37,43 @@ confidence-threshold = 0.8
 #
 # Rule:  IO / presentation libraries are allowed ONLY in the layer that owns IO.
 # How:   `wrappers` lists the only crates that may transitively pull in the named
-#        dependency. If `clw-domain` accidentally pulls in `crossterm`, this fails.
+#        dependency. If `core::domain` accidentally pulls in `crossterm`, this fails.
+#        (Layer-level enforcement inside `clw-watchdog` is by `mod` boundaries +
+#         code review; cargo-deny operates on crate granularity.)
 [bans]
 multiple-versions = "warn"
 wildcards         = "deny"
 allow-wildcards   = []
 
-# Process / signal handling — infrastructure layer only.
+# Process / signal handling — adapters/primary/ctrlc only.
 [[bans.deny]]
 name     = "ctrlc"
-wrappers = ["clw-infrastructure"]
+wrappers = ["clw-watchdog"]
 
-# JSONL parsing — only the infra adapter that reads Claude Code logs needs serde_json.
+# JSONL parsing — adapters/secondary/usage_log reads Claude Code logs.
 [[bans.deny]]
 name     = "serde_json"
-wrappers = ["clw-infrastructure"]
+wrappers = ["clw-watchdog"]
 
-# YAML config — only the infra adapter that loads/saves user settings.
+# YAML config — adapters/secondary/settings_store loads/saves user settings.
 [[bans.deny]]
 name     = "serde_yml"
-wrappers = ["clw-infrastructure"]
+wrappers = ["clw-watchdog"]
 
-# Home/config dir lookup — only infra needs it for the default config path.
+# Home/config dir lookup — settings_store needs it for the default config path.
 [[bans.deny]]
 name     = "dirs"
-wrappers = ["clw-infrastructure"]
+wrappers = ["clw-watchdog"]
 
-# Interactive terminal prompts — wizard lives in the CLI composition root.
+# Interactive terminal prompts — adapters/primary/wizard.
 [[bans.deny]]
 name     = "dialoguer"
-wrappers = ["clw-cli"]
+wrappers = ["clw-watchdog"]
 
-# Table rendering — only the binary draws tables.
+# Table rendering — adapters/secondary/presenter.
 [[bans.deny]]
 name     = "comfy-table"
-wrappers = ["clw-infrastructure"]
+wrappers = ["clw-watchdog"]
 
 # CLI parsing — composition root only.
 [[bans.deny]]
@@ -84,8 +86,8 @@ name     = "tracing-subscriber"
 wrappers = ["clw-cli"]
 
 # Add more as needed, e.g.:
-#   [[bans.deny]] name = "tokio" wrappers = ["clw-infrastructure", "clw-cli"]
-#   [[bans.deny]] name = "sqlx"  wrappers = ["clw-infrastructure"]
+#   [[bans.deny]] name = "tokio" wrappers = ["clw-watchdog", "clw-cli"]
+#   [[bans.deny]] name = "sqlx"  wrappers = ["clw-watchdog"]
 
 # --- Source allow-list (no random git deps) ---
 [sources]

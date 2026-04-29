@@ -68,7 +68,7 @@ pub trait Presenter: Send + Sync {
     fn idle_tick(&self, info: &IdleInfo);
     fn limit_detected(&self, target_human: &str, wait_seconds: i64, buffer_seconds: i64);
     fn limit_already_passed(&self, target_human: &str);
-    fn countdown_step(&self, remaining_seconds: i64, total_seconds: i64, target_human: &str);
+    fn countdown_step(&self, remaining_seconds: i64, target_human: &str);
     fn resumed(&self, count: u32, resume_text: &str, session: &str);
     fn shutdown(&self, uptime_seconds: i64, total_resumes: u32);
     fn warn(&self, message: &str);

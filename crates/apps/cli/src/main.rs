@@ -117,6 +117,10 @@ fn cmd_run(config_path: &std::path::Path, session: &str) -> Result<()> {
 fn start_watchdog(settings: Settings, session: String) -> Result<()> {
     let stop = CtrlCStop::install().context("install Ctrl-C handler")?;
     let presenter = TerminalPresenter::new();
+    // Presenter just put the terminal into -icanon mode; safe to start the
+    // single-keystroke 'q' watcher now (without -icanon the user would have
+    // to press Enter after q, which still works but feels broken).
+    stop.enable_q_to_quit();
     let usage_reader = ClaudeCodeLogReader::for_claude_dir(&settings.claude_dir);
     let cfg = settings.into_watch_config(session);
     let svc = WatchService::new(TmuxCli, SystemClock, stop, presenter, usage_reader, cfg);

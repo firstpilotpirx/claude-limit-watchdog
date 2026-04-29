@@ -17,6 +17,7 @@
 //! first, write themselves, and let the next tick re-draw the panel below.
 
 use std::io::{self, IsTerminal, Write};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 use comfy_table::presets::UTF8_FULL;
@@ -48,6 +49,12 @@ const BOLD_BRIGHT_GREEN: &str = "\x1b[1;92m";
 
 const NON_TTY_TICK_SECS: i64 = 900;
 
+/// Claude Code's plan tracks usage in 5-hour rolling windows; the resume
+/// countdown bar is scaled to that window so the fill ratio reads as
+/// "how far through the current window are we", regardless of how late
+/// in the window the limit was hit.
+const SESSION_WINDOW_SECS: i64 = 5 * 3600;
+
 #[derive(Debug)]
 pub struct TerminalPresenter {
     is_tty:               bool,
@@ -56,6 +63,11 @@ pub struct TerminalPresenter {
     /// How many newlines the last live panel emitted. Used to scroll back up
     /// before re-rendering or before printing a permanent log line.
     last_panel_lines:     AtomicUsize,
+    /// Snapshot of the terminal's `stty` settings captured at start-up.
+    /// Restored in `Drop` so the user's shell isn't left in raw mode if we
+    /// crash or exit normally. `None` means we're not on a TTY (or the save
+    /// failed) and there's nothing to restore.
+    saved_stty:           Option<String>,
 }
 
 impl Default for TerminalPresenter {
@@ -68,6 +80,18 @@ impl TerminalPresenter {
     #[must_use]
     pub fn new() -> Self {
         let is_tty = io::stdout().is_terminal();
+        let saved_stty = if is_tty {
+            let saved = save_stty();
+            if saved.is_some() {
+                // -echo: stray keystrokes won't appear on the live panel.
+                // -icanon: Enter is just a byte, not "newline + cursor down",
+                //          so accidental input doesn't push our panel up.
+                set_silent_input();
+            }
+            saved
+        } else {
+            None
+        };
         if is_tty {
             print!("{HIDE_CURSOR}");
             let _ = io::stdout().flush();
@@ -77,6 +101,7 @@ impl TerminalPresenter {
             spinner_idx: AtomicUsize::new(0),
             last_non_tty_tick_at: AtomicI64::new(0),
             last_panel_lines: AtomicUsize::new(0),
+            saved_stty,
         }
     }
 
@@ -95,10 +120,16 @@ impl TerminalPresenter {
 
     /// Re-draw the live panel in place. `body` may contain newlines; the
     /// **last** line stays on screen until the next call.
+    ///
+    /// Each visible line is truncated to the current terminal width so it
+    /// can't trigger a soft-wrap — soft-wraps fool our cursor bookkeeping
+    /// (we count `\n` chars, not wrapped rows) and the panel "scrolls"
+    /// instead of redrawing.
     fn render_panel(&self, body: &str) {
         if !self.is_tty {
             return;
         }
+        let body = truncate_lines_to_width(body, terminal_cols());
         let mut stdout = io::stdout().lock();
         let prev = self.last_panel_lines.load(Ordering::Relaxed);
         if prev > 0 {
@@ -156,6 +187,8 @@ impl TerminalPresenter {
             if let Some(window) = info.session_window {
                 out.push_str(&self.session_header(&window));
                 out.push('\n');
+                out.push_str(&self.session_progress_line(&window, info.now_epoch));
+                out.push('\n');
             }
             out.push_str(&render_stats_table(&info.session_stats, self.is_tty));
             out.push('\n');
@@ -163,6 +196,28 @@ impl TerminalPresenter {
         }
         out.push_str(&self.idle_status_line(info));
         out
+    }
+
+    /// Sub-line under the session header showing the rolling 5h window's
+    /// hard reset point and a progress bar of where we are inside it.
+    /// Same red→green colour scheme as the resume countdown so both bars
+    /// read the same way: empty/red = lots of time before reset,
+    /// full/green = reset is imminent.
+    fn session_progress_line(&self, window: &SessionWindow, now: i64) -> String {
+        let total = (window.end_epoch - window.start_epoch).max(1);
+        let elapsed = (now - window.start_epoch).clamp(0, total);
+        let remaining = (window.end_epoch - now).max(0);
+        let pct = (elapsed * 100 / total).clamp(0, 100);
+        let fill = bar_fill_color(pct);
+        let bar = render_colored_bar(elapsed, total, 22, fill);
+        let reset_at = format_clock(window.end_epoch);
+        format!(
+            "{resets} {at}  {until}  {bar} {pct_text}",
+            resets = self.paint(BOLD, "session resets"),
+            at = self.paint(BOLD, &format!("at {reset_at}")),
+            until = self.paint(DIM, &format!("· in {}", format_short(remaining))),
+            pct_text = self.paint(DIM, &format!("{pct}%")),
+        )
     }
 
     /// Header for the per-model usage table.
@@ -210,7 +265,121 @@ impl Drop for TerminalPresenter {
             print!("{SHOW_CURSOR}");
             let _ = io::stdout().flush();
         }
+        if let Some(saved) = self.saved_stty.take() {
+            restore_stty(&saved);
+        }
     }
+}
+
+// ---------- terminal input mode helpers ----------
+
+/// Capture the current `stty` settings so `Drop` can restore them.
+///
+/// `stty -g` prints a single colon-separated string (a portable "save file"
+/// for terminal settings); pass it back unchanged and `stty` reapplies them.
+fn save_stty() -> Option<String> {
+    let out = Command::new("stty")
+        .arg("-g")
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Disable `echo` and canonical line buffering on the controlling terminal.
+/// `-isig` is **not** set, so Ctrl-C still raises SIGINT (which our handler
+/// catches).
+fn set_silent_input() {
+    let _ = Command::new("stty")
+        .args(["-echo", "-icanon"])
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn restore_stty(saved: &str) {
+    let _ = Command::new("stty")
+        .arg(saved)
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Current terminal width in columns, or `None` if `stty size` fails or
+/// returns garbage. Re-detected per render so window resizes are picked up
+/// without a SIGWINCH handler.
+fn terminal_cols() -> Option<usize> {
+    let out = Command::new("stty")
+        .arg("size")
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut parts = s.split_whitespace();
+    let _rows = parts.next()?;
+    let cols: usize = parts.next()?.parse().ok()?;
+    if cols == 0 { None } else { Some(cols) }
+}
+
+/// Truncate each `\n`-separated line of `body` to `max_cols` visible columns
+/// (treating ANSI CSI escape sequences as zero-width). When `max_cols` is
+/// `None` (couldn't detect the terminal) the body is returned unchanged —
+/// preferable to mangling output on terminals where we can't measure.
+fn truncate_lines_to_width(body: &str, max_cols: Option<usize>) -> String {
+    let Some(max) = max_cols else { return body.to_string(); };
+    let mut out = String::with_capacity(body.len());
+    let mut iter = body.split('\n').peekable();
+    while let Some(line) = iter.next() {
+        out.push_str(&truncate_visible(line, max));
+        if iter.peek().is_some() {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Cut a single line to at most `max_cols` visible columns. ANSI CSI escapes
+/// (`ESC [ … letter`) are passed through without being counted; if a cut
+/// happens mid-style we append `RESET` so the truncation doesn't bleed
+/// colour into anything that follows.
+fn truncate_visible(line: &str, max_cols: usize) -> String {
+    let mut visible = 0usize;
+    let mut in_esc = false;
+    let mut had_escape = false;
+    let mut out = String::with_capacity(line.len());
+    for ch in line.chars() {
+        if in_esc {
+            out.push(ch);
+            if ch.is_ascii_alphabetic() {
+                in_esc = false;
+            }
+            continue;
+        }
+        if ch == '\x1b' {
+            in_esc = true;
+            had_escape = true;
+            out.push(ch);
+            continue;
+        }
+        if visible >= max_cols {
+            if had_escape {
+                out.push_str(RESET);
+            }
+            return out;
+        }
+        visible += 1;
+        out.push(ch);
+    }
+    out
 }
 
 impl Presenter for TerminalPresenter {
@@ -251,6 +420,7 @@ impl Presenter for TerminalPresenter {
             dim("response"),
             self.paint(BOLD_BRIGHT_GREEN, &info.resume_text)
         );
+        println!("    {}      {}", dim("quit"), dim("press q or Ctrl-C"));
         println!("   {bar}");
         println!();
     }
@@ -287,7 +457,7 @@ impl Presenter for TerminalPresenter {
         self.write_log(MAGENTA, "⚡", &body);
     }
 
-    fn countdown_step(&self, remaining_seconds: i64, total_seconds: i64, target_human: &str) {
+    fn countdown_step(&self, remaining_seconds: i64, target_human: &str) {
         if !self.is_tty {
             let now = chrono_now();
             let last = self.last_non_tty_tick_at.load(Ordering::Relaxed);
@@ -300,18 +470,18 @@ impl Presenter for TerminalPresenter {
             }
             return;
         }
-        let total = total_seconds.max(1);
-        let elapsed = (total - remaining_seconds).max(0);
-        let pct = (elapsed * 100 / total).clamp(0, 100);
-        let bar = render_bar(elapsed, total, 22);
+        let elapsed = (SESSION_WINDOW_SECS - remaining_seconds).clamp(0, SESSION_WINDOW_SECS);
+        let pct = (elapsed * 100 / SESSION_WINDOW_SECS).clamp(0, 100);
+        let fill = bar_fill_color(pct);
+        let bar = render_colored_bar(elapsed, SESSION_WINDOW_SECS, 22, fill);
         let color = remaining_color(remaining_seconds);
         let line = format!(
-            "{prefix} {wait_glyph}  resume in {remaining}  {target}  {bar_part}",
+            "{prefix} {wait_glyph}  resume in {remaining}  {target}  {bar} {pct_text}",
             prefix = self.prefix(),
             wait_glyph = self.paint(MAGENTA, "⏳"),
             remaining = self.paint(&format!("{BOLD}{color}"), &format_hms(remaining_seconds)),
             target = self.paint(DIM, &format!("· target {target_human}")),
-            bar_part = self.paint(DIM, &format!("{bar} {pct}%")),
+            pct_text = self.paint(DIM, &format!("{pct}%")),
         );
         self.render_panel(&line);
     }
@@ -491,12 +661,30 @@ fn remaining_color(seconds: i64) -> &'static str {
     }
 }
 
-fn render_bar(done: i64, total: i64, width: usize) -> String {
+/// Fill colour for the countdown bar based on how full it is. Reads as a
+/// traffic light: nearly empty = lots of waiting still ahead (red), nearly
+/// full = reset is imminent (green). This is intentionally inverted from
+/// `remaining_color`, which colours the *time text* by urgency.
+fn bar_fill_color(pct: i64) -> &'static str {
+    if pct >= 66 {
+        BRIGHT_GREEN
+    } else if pct >= 33 {
+        BRIGHT_YELLOW
+    } else {
+        BRIGHT_RED
+    }
+}
+
+fn render_colored_bar(done: i64, total: i64, width: usize, fill_color: &str) -> String {
     let total = total.max(1);
     let width_i64 = i64::try_from(width).unwrap_or(i64::MAX);
     let raw = (done.max(0) * width_i64) / total;
     let clamped = raw.clamp(0, width_i64);
     let filled = usize::try_from(clamped).unwrap_or(0);
     let empty = width.saturating_sub(filled);
-    format!("[{}{}]", BAR_FULL.repeat(filled), BAR_EMPTY.repeat(empty))
+    format!(
+        "[{fill_color}{}{RESET}{DIM}{}{RESET}]",
+        BAR_FULL.repeat(filled),
+        BAR_EMPTY.repeat(empty),
+    )
 }

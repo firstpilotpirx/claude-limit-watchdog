@@ -231,8 +231,7 @@ where
     }
 
     fn countdown(&self, end_epoch: i64, target_human: &str) {
-        let total = end_epoch - self.clock.now_epoch();
-        if total <= 0 {
+        if end_epoch <= self.clock.now_epoch() {
             return;
         }
         while !self.stop.should_stop() {
@@ -241,8 +240,7 @@ where
             if remaining <= 0 {
                 break;
             }
-            self.presenter
-                .countdown_step(remaining, total, target_human);
+            self.presenter.countdown_step(remaining, target_human);
             self.clock.sleep(Duration::from_secs(1));
         }
     }
@@ -298,7 +296,7 @@ mod tests {
         p.expect_idle_tick().returning(|_info: &IdleInfo| ());
         p.expect_limit_detected().returning(|_, _, _| ());
         p.expect_limit_already_passed().returning(|_| ());
-        p.expect_countdown_step().returning(|_, _, _| ());
+        p.expect_countdown_step().returning(|_, _| ());
         p.expect_resumed().returning(|_, _, _| ());
         p.expect_warn().returning(|_| ());
         p.expect_error().returning(|_| ());

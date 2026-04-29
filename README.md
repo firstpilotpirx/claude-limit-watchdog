@@ -49,7 +49,7 @@ Three options, pick whichever fits.
 **1. Cargo install (recommended for users):**
 
 ```bash
-cargo install --path crates/cli
+cargo install --path crates/apps/cli
 # binary → ~/.cargo/bin/cc-resume-session
 ```
 
@@ -111,7 +111,7 @@ The watchdog itself takes a single positional argument (the tmux session name). 
 | Resume text      | `continue the work where you left off` | Text sent to the pane after reset             |
 | Pane scan window | last `200` lines                       | How many trailing lines of the pane to scan   |
 
-These live in `crates/application/src/watch_service.rs::WatchConfig::defaults_for`. Change them there and rebuild — there are no CLI flags or env vars for them yet (the bash original didn't have them either).
+These live in `crates/components/watchdog/src/core/application/watch_service.rs::WatchConfig::defaults_for`. Change them there and rebuild — there are no CLI flags or env vars for them yet (the bash original didn't have them either).
 
 ### Environment variables
 
@@ -136,22 +136,33 @@ These live in `crates/application/src/watch_service.rs::WatchConfig::defaults_fo
 
 ## Project layout
 
+Hexagonal (Ports & Adapters) layout, feature-first. Crates are organized by
+**function** (apps vs. components), and slices inside each feature crate are
+organized by **layer** (`core` vs. `adapters`).
+
 ```
 claude-limit-watchdog/
-├── Cargo.toml                    workspace root
+├── Cargo.toml                              workspace root
 ├── rust-toolchain.toml
 ├── rustfmt.toml  .taplo.toml  deny.toml  Justfile
 ├── crates/
-│   ├── domain/                   pure types + parser + time math (no IO)
-│   ├── application/              ports (traits) + WatchService use case
-│   ├── infrastructure/           adapters: TmuxCli, SystemClock, CtrlCStop, TerminalPresenter
-│   └── cli/                      composition root, binary `cc-resume-session`
+│   ├── apps/
+│   │   └── cli/                            composition root, binary `cc-resume-session`
+│   └── components/
+│       └── watchdog/                       the watchdog feature
+│           └── src/
+│               ├── core/
+│               │   ├── domain/             pure types + parser + time math (no IO)
+│               │   └── application/        ports (traits) + use cases (WatchService, UsageReportService)
+│               └── adapters/
+│                   ├── primary/            input adapters: ctrlc, wizard
+│                   └── secondary/          output adapters: tmux, clock, presenter, settings_store, usage_log
 └── .github/workflows/ci.yml
 ```
 
 **Layering rules** are enforced two ways:
-- The compiler refuses imports that aren't declared in `Cargo.toml`. `domain` doesn't depend on `application`, so application types are physically unreachable from domain code.
-- `cargo deny check bans` — see `deny.toml` — locks IO crates (`ctrlc`, `clap`, `tracing-subscriber`) into specific layers. If `domain` accidentally pulls one in, CI fails.
+- Inside `clw-watchdog`, `core::domain` and `core::application` cannot import from `adapters` (the module tree forbids it without a `use crate::adapters::…`, which code review catches). `core::domain` also cannot import from `core::application`.
+- `cargo deny check bans` — see `deny.toml` — locks IO crates (`ctrlc`, `dialoguer`, `serde_yml`, `clap`, etc.) into the specific crates that own those adapters. If a stray dependency leaks into a layer that shouldn't have it, CI fails.
 
 ---
 
