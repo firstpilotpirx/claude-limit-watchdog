@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/apps/cli", "crates/components/watchdog"]
+members = [
+    "crates/apps/cli",
+    "crates/components/watchdog/core",
+    "crates/components/watchdog/adapters",
+]
 
 # --- Shared package metadata (inherited by every crate via `field.workspace = true`) ---
 [workspace.package]
@@ -15,8 +19,10 @@ readme       = "README.md"
 
 # --- Shared dependency versions (inherited via `dep.workspace = true`) ---
 [workspace.dependencies]
-# Internal crates
-clw-watchdog = { path = "crates/components/watchdog" }
+# Internal crates — crate boundaries enforce the dependency rule:
+# adapters depend on core, never the reverse.
+clw-watchdog-core     = { path = "crates/components/watchdog/core" }
+clw-watchdog-adapters = { path = "crates/components/watchdog/adapters" }
 
 # External
 anyhow             = "1"
@@ -33,6 +39,7 @@ serde_yml          = "0.0.12"
 dialoguer          = "0.11"
 dirs               = "5"
 comfy-table        = "=7.1.4"
+unicode-width      = "0.2"
 
 # Test-only
 rstest             = "0.23"

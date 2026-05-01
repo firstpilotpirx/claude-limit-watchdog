@@ -1,17 +1,25 @@
 //! `cc-resume-session` — composition root.
 //!
 //! Parses CLI args, loads/initialises settings, builds the concrete adapters
-//! from `clw-watchdog`, wires them into the [`WatchService`], and runs the
-//! watch loop.
+//! from the watchdog adapter crate, wires them into the [`WatchService`], and
+//! runs the watch loop.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use clw_watchdog::{
-    default_config_path, settings_store, wizard, ClaudeCodeLogReader, CtrlCStop, Presenter,
-    Settings, SystemClock, TerminalPresenter, TmuxCli, WatchService,
+use clw_watchdog_adapters::primary::configsetup::stdio::{self as wizard, ClaudeDirChoices};
+use clw_watchdog_adapters::primary::lifecycle::signal::CtrlCStop;
+use clw_watchdog_adapters::secondary::clock::system::SystemClock;
+use clw_watchdog_adapters::secondary::panecontrol::tmux::TmuxPane;
+use clw_watchdog_adapters::secondary::settingspersistence::yaml::{
+    default_claude_dir, default_config_path, personal_claude_dir, to_yaml_string,
+    YamlSettingsRepository,
 };
+use clw_watchdog_adapters::secondary::usagelog::filesystem::ClaudeCodeLogReader;
+use clw_watchdog_adapters::secondary::userpresentation::stdio::TerminalPresenter;
+use clw_watchdog_core::application::ports::{Presenter, SettingsRepository};
+use clw_watchdog_core::application::{Settings, WatchService};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -76,18 +84,21 @@ fn main() -> Result<()> {
 }
 
 fn cmd_config_init(config_path: &std::path::Path) -> Result<()> {
-    let existing = settings_store::load(config_path).context("load existing config")?;
-    let settings = wizard::run(existing.as_ref())?;
-    settings_store::save(config_path, &settings).context("save config")?;
+    let repo = YamlSettingsRepository::new(config_path.to_path_buf());
+    let existing = repo.load().context("load existing config")?;
+    let choices = claude_dir_choices()?;
+    let settings = wizard::run(&choices, existing.as_ref())?;
+    repo.save(&settings).context("save config")?;
     println!("\nConfiguration saved to {}", config_path.display());
     Ok(())
 }
 
 fn cmd_config_show(config_path: &std::path::Path) -> Result<()> {
     println!("Path: {}", config_path.display());
-    match settings_store::load(config_path).context("load config")? {
+    let repo = YamlSettingsRepository::new(config_path.to_path_buf());
+    match repo.load().context("load config")? {
         Some(s) => {
-            let yaml = settings_store::to_yaml_string(&s).context("render config as yaml")?;
+            let yaml = to_yaml_string(&s).context("render config as yaml")?;
             print!("{yaml}");
         }
         None => println!("(no config file — run `cc-resume-session config init`)"),
@@ -96,22 +107,29 @@ fn cmd_config_show(config_path: &std::path::Path) -> Result<()> {
 }
 
 fn cmd_run(config_path: &std::path::Path, session: &str) -> Result<()> {
-    let settings = if let Some(s) =
-        settings_store::load(config_path).context("load config")?
-    {
+    let repo = YamlSettingsRepository::new(config_path.to_path_buf());
+    let settings = if let Some(s) = repo.load().context("load config")? {
         s
     } else {
         println!(
             "No config found at {}. Starting first-run wizard.",
             config_path.display()
         );
-        let s = wizard::run(None)?;
-        settings_store::save(config_path, &s).context("save config")?;
+        let choices = claude_dir_choices()?;
+        let s = wizard::run(&choices, None)?;
+        repo.save(&s).context("save config")?;
         println!("Configuration saved to {}\n", config_path.display());
         s
     };
 
     start_watchdog(settings, session.to_string())
+}
+
+fn claude_dir_choices() -> Result<ClaudeDirChoices> {
+    Ok(ClaudeDirChoices {
+        default: default_claude_dir().context("locate default Claude dir")?,
+        personal: personal_claude_dir().context("locate personal Claude dir")?,
+    })
 }
 
 fn start_watchdog(settings: Settings, session: String) -> Result<()> {
@@ -123,7 +141,7 @@ fn start_watchdog(settings: Settings, session: String) -> Result<()> {
     stop.enable_q_to_quit();
     let usage_reader = ClaudeCodeLogReader::for_claude_dir(&settings.claude_dir);
     let cfg = settings.into_watch_config(session);
-    let svc = WatchService::new(TmuxCli, SystemClock, stop, presenter, usage_reader, cfg);
+    let svc = WatchService::new(TmuxPane, SystemClock, stop, presenter, usage_reader, cfg);
 
     match svc.run() {
         Ok(stats) => {

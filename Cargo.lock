@@ -161,7 +161,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "clw-watchdog",
+ "clw-watchdog-adapters",
+ "clw-watchdog-core",
  "insta",
  "rstest",
  "tracing",
@@ -169,23 +170,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "clw-watchdog"
+name = "clw-watchdog-adapters"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clw-watchdog-core",
  "comfy-table",
  "ctrlc",
  "dialoguer",
  "dirs",
  "insta",
  "jiff",
- "mockall",
- "proptest",
- "regex",
  "rstest",
  "serde",
  "serde_json",
  "serde_yml",
+ "thiserror",
+ "tracing",
+ "unicode-width",
+]
+
+[[package]]
+name = "clw-watchdog-core"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "jiff",
+ "mockall",
+ "proptest",
+ "regex",
+ "rstest",
  "thiserror",
  "tracing",
 ]

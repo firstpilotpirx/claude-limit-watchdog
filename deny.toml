@@ -35,45 +35,53 @@ confidence-threshold = 0.8
 
 # --- Architecture rules (the equivalent of ArchUnit DSL) ---
 #
-# Rule:  IO / presentation libraries are allowed ONLY in the layer that owns IO.
-# How:   `wrappers` lists the only crates that may transitively pull in the named
-#        dependency. If `core::domain` accidentally pulls in `crossterm`, this fails.
-#        (Layer-level enforcement inside `clw-watchdog` is by `mod` boundaries +
-#         code review; cargo-deny operates on crate granularity.)
+# Rule:  IO / presentation libraries are allowed ONLY in the crate that owns IO.
+# How:   `wrappers` lists the only crates that may transitively pull in the
+#        named dependency. The dependency rule `adapters → core` is enforced
+#        by Cargo itself — `clw-watchdog-core` does not list
+#        `clw-watchdog-adapters` in its `[dependencies]`, so the compiler
+#        refuses any reverse import.
 [bans]
 multiple-versions = "warn"
 wildcards         = "deny"
 allow-wildcards   = []
 
-# Process / signal handling — adapters/primary/ctrlc only.
+# Process / signal handling — primary/lifecycle/signal only.
 [[bans.deny]]
 name     = "ctrlc"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
 
-# JSONL parsing — adapters/secondary/usage_log reads Claude Code logs.
+# JSONL parsing — secondary/usagelog/filesystem reads Claude Code logs.
 [[bans.deny]]
 name     = "serde_json"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
 
-# YAML config — adapters/secondary/settings_store loads/saves user settings.
+# YAML config — secondary/settingspersistence/yaml.
 [[bans.deny]]
 name     = "serde_yml"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
 
-# Home/config dir lookup — settings_store needs it for the default config path.
+# Home/config dir lookup — yaml/paths.rs only.
 [[bans.deny]]
 name     = "dirs"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
 
-# Interactive terminal prompts — adapters/primary/wizard.
+# Interactive terminal prompts — primary/configsetup/stdio.
 [[bans.deny]]
 name     = "dialoguer"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
 
-# Table rendering — adapters/secondary/presenter.
+# Table rendering — secondary/userpresentation/stdio.
 [[bans.deny]]
 name     = "comfy-table"
-wrappers = ["clw-watchdog"]
+wrappers = ["clw-watchdog-adapters"]
+
+# `serde` derives belong on adapter DTOs only (handbook: Domain Purity).
+# Banning it from `clw-watchdog-core` is the architectural enforcement of
+# "core knows zero serialization framework".
+[[bans.deny]]
+name     = "serde"
+wrappers = ["clw-watchdog-adapters"]
 
 # CLI parsing — composition root only.
 [[bans.deny]]
@@ -86,8 +94,8 @@ name     = "tracing-subscriber"
 wrappers = ["clw-cli"]
 
 # Add more as needed, e.g.:
-#   [[bans.deny]] name = "tokio" wrappers = ["clw-watchdog", "clw-cli"]
-#   [[bans.deny]] name = "sqlx"  wrappers = ["clw-watchdog"]
+#   [[bans.deny]] name = "tokio" wrappers = ["clw-watchdog-adapters", "clw-cli"]
+#   [[bans.deny]] name = "sqlx"  wrappers = ["clw-watchdog-adapters"]
 
 # --- Source allow-list (no random git deps) ---
 [sources]

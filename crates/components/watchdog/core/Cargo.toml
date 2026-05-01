@@ -1,0 +1,29 @@
+[package]
+name         = "clw-watchdog-core"
+description  = "Watchdog component — pure inner hexagon: domain + application + ports."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+jiff      = { workspace = true }
+regex     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+mockall   = { workspace = true, optional = true }
+
+[dev-dependencies]
+mockall  = { workspace = true }
+rstest   = { workspace = true }
+proptest = { workspace = true }
+insta    = { workspace = true }
+
+[features]
+# Enabled in tests to expose mockall-generated fakes for the ports.
+test-support = ["dep:mockall"]
+
+[lints]
+workspace = true

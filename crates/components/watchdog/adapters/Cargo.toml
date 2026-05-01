@@ -1,0 +1,43 @@
+[package]
+name         = "clw-watchdog-adapters"
+description  = "Watchdog component — primary & secondary adapters implementing the ports declared in clw-watchdog-core."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+clw-watchdog-core = { workspace = true }
+
+# Cross-cutting
+anyhow    = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+# adapters/primary/lifecycle/signal
+ctrlc     = { workspace = true }
+
+# adapters/primary/configsetup/stdio
+dialoguer = { workspace = true }
+
+# adapters/secondary/userpresentation/stdio
+comfy-table   = { workspace = true }
+unicode-width = { workspace = true }
+
+# adapters/secondary/usagelog/filesystem
+serde      = { workspace = true }
+serde_json = { workspace = true }
+jiff       = { workspace = true }
+
+# adapters/secondary/settingspersistence/yaml
+serde_yml = { workspace = true }
+dirs      = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+insta  = { workspace = true }
+
+[lints]
+workspace = true
