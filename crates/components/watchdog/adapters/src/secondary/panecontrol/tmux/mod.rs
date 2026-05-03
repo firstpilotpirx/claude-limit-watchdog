@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-use clw_watchdog_core::application::ports::{Pane, PaneError};
+use clw_watchdog_core::application::ports::{Pane, PaneError, PaneKey};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TmuxPane;
@@ -44,5 +44,28 @@ impl Pane for TmuxPane {
             )));
         }
         Ok(())
+    }
+
+    fn send_key(&self, name: &str, key: PaneKey) -> Result<(), PaneError> {
+        let status = Command::new("tmux")
+            .args(["send-keys", "-t", name, tmux_key_name(key)])
+            .status()
+            .map_err(|e| PaneError::OperationFailed(format!("tmux send-keys: {e}")))?;
+        if !status.success() {
+            return Err(PaneError::OperationFailed(format!(
+                "tmux send-keys (key) exit {:?}",
+                status.code()
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn tmux_key_name(key: PaneKey) -> &'static str {
+    match key {
+        PaneKey::Up => "Up",
+        PaneKey::Down => "Down",
+        PaneKey::Enter => "Enter",
+        PaneKey::Escape => "Escape",
     }
 }

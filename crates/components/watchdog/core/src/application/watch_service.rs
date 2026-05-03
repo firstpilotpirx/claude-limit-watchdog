@@ -5,9 +5,11 @@
 
 use std::time::Duration;
 
-use super::ports::{BannerInfo, Clock, IdleInfo, Pane, PaneError, Presenter, StopSignal};
+use super::ports::{BannerInfo, Clock, IdleInfo, Pane, PaneError, PaneKey, Presenter, StopSignal};
 use super::usage_report::{UsageLogReader, UsageReportService};
-use crate::domain::{parse_reset_line, ModelStats, ResetTime, SessionWindow};
+use crate::domain::{
+    detect_rate_limit_menu, parse_reset_line, ModelStats, ResetTime, SessionWindow,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
@@ -251,10 +253,35 @@ where
     }
 
     fn send_resume(&self, state: &mut State) -> Result<(), WatchError> {
+        self.dismiss_rate_limit_menu_if_open()?;
         self.pane.send(&self.cfg.session, &self.cfg.resume_text)?;
         state.resume_count += 1;
         self.presenter
             .resumed(state.resume_count, &self.cfg.resume_text, &self.cfg.session);
+        Ok(())
+    }
+
+    /// If Claude Code's rate-limit dialog is currently displayed, navigate the
+    /// cursor to the first option (`Stop and wait for limit to reset`) and
+    /// confirm with Enter so the chat input is ready to receive the resume
+    /// text. No-op when the menu is not visible — sending arrows into the
+    /// chat input would scroll command history and corrupt the resume.
+    fn dismiss_rate_limit_menu_if_open(&self) -> Result<(), WatchError> {
+        let pane_text = self.pane.capture(&self.cfg.session, self.cfg.pane_lines)?;
+        let Some(menu) = detect_rate_limit_menu(&pane_text) else {
+            return Ok(());
+        };
+        tracing::info!(
+            cursor = menu.cursor,
+            "rate-limit menu open, selecting 'Stop and wait for limit to reset'"
+        );
+        for _ in 0..menu.ups_to_top() {
+            self.pane.send_key(&self.cfg.session, PaneKey::Up)?;
+        }
+        self.pane.send_key(&self.cfg.session, PaneKey::Enter)?;
+        // Let Claude Code process the confirmation and return focus to the
+        // chat input before we type the resume line.
+        self.clock.sleep(Duration::from_millis(500));
         Ok(())
     }
 
@@ -408,5 +435,88 @@ trailing line
         let stats = svc.run().expect("clean shutdown");
         assert_eq!(stats.resume_count, 1);
         assert_eq!(*send_count.lock().unwrap(), 1);
+    }
+
+    /// When the rate-limit dialog is on screen with the cursor on option 2,
+    /// `send_resume` must press `Up` once and `Enter` once before sending the
+    /// resume text — otherwise the resume goes to the wrong dialog.
+    #[test]
+    fn run_navigates_rate_limit_menu_before_resuming() {
+        use std::sync::Arc;
+
+        let pane_text = "\
+You've hit your limit · resets 1:00am (UTC)
+
+What do you want to do?
+
+  1. Stop and wait for limit to reset
+❯ 2. Upgrade your plan
+  3. Upgrade to Team plan
+
+Enter to confirm · Esc to cancel
+"
+        .to_string();
+
+        let mut pane = MockPane::new();
+        pane.expect_exists().return_const(true);
+        let pane_text_clone = pane_text.clone();
+        pane.expect_capture()
+            .returning(move |_, _| Ok(pane_text_clone.clone()));
+
+        let send_count = Arc::new(Mutex::new(0u32));
+        let send_count_clone = send_count.clone();
+        pane.expect_send().returning(move |_, _| {
+            *send_count_clone.lock().unwrap() += 1;
+            Ok(())
+        });
+
+        let up_count = Arc::new(Mutex::new(0u32));
+        let enter_count = Arc::new(Mutex::new(0u32));
+        let up_clone = up_count.clone();
+        let enter_clone = enter_count.clone();
+        pane.expect_send_key().returning(move |_, key| {
+            match key {
+                PaneKey::Up => *up_clone.lock().unwrap() += 1,
+                PaneKey::Enter => *enter_clone.lock().unwrap() += 1,
+                _ => {}
+            }
+            Ok(())
+        });
+
+        let mut clock = MockClock::new();
+        clock.expect_now_epoch().return_const(1_705_320_000_i64);
+        clock.expect_sleep().returning(|_: Duration| ());
+
+        let calls = Arc::new(Mutex::new(0u32));
+        let calls2 = calls.clone();
+        let mut stop = MockStopSignal::new();
+        stop.expect_should_stop().returning(move || {
+            let mut c = calls2.lock().unwrap();
+            *c += 1;
+            *c > 1
+        });
+
+        let svc = WatchService::new(
+            pane,
+            clock,
+            stop,
+            presenter_allowing_anything(),
+            empty_usage_reader(),
+            defaults(),
+        );
+
+        let stats = svc.run().expect("clean shutdown");
+        assert_eq!(stats.resume_count, 1);
+        assert_eq!(*send_count.lock().unwrap(), 1, "resume text sent once");
+        assert_eq!(
+            *up_count.lock().unwrap(),
+            1,
+            "one Up press to move cursor from option 2 to option 1"
+        );
+        assert_eq!(
+            *enter_count.lock().unwrap(),
+            1,
+            "Enter pressed once to confirm the menu choice"
+        );
     }
 }

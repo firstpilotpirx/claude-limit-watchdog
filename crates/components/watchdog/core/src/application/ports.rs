@@ -6,16 +6,29 @@ use std::time::Duration;
 use crate::application::settings::Settings;
 use crate::domain::{ModelStats, SessionWindow};
 
+/// A single non-text key the watchdog can inject into the pane. Listed
+/// explicitly (instead of taking a raw string) so the domain stays decoupled
+/// from any particular terminal multiplexer's keystroke vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneKey {
+    Up,
+    Down,
+    Enter,
+    Escape,
+}
+
 /// Access to a named "pane" — the terminal-like surface where Claude Code is
-/// running. The watchdog needs three operations on it: existence check,
-/// recent-output capture, and key/text injection. Implemented by the tmux
-/// adapter; could be implemented for other process surfaces that expose the
-/// same shape (screen, kitty, etc.).
+/// running. The watchdog needs four operations on it: existence check,
+/// recent-output capture, text injection (line + Enter), and single-key
+/// injection (for navigating Claude Code's interactive menus). Implemented by
+/// the tmux adapter; could be implemented for other process surfaces that
+/// expose the same shape (screen, kitty, etc.).
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 pub trait Pane: Send + Sync {
     fn exists(&self, name: &str) -> bool;
     fn capture(&self, name: &str, lines: u32) -> Result<String, PaneError>;
     fn send(&self, name: &str, text: &str) -> Result<(), PaneError>;
+    fn send_key(&self, name: &str, key: PaneKey) -> Result<(), PaneError>;
 }
 
 #[derive(Debug, thiserror::Error)]
